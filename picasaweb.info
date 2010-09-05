@@ -1,0 +1,7 @@
+; $Id: picasaweb.info,v 0.1 $
+name = PicasawebViewer
+description = This module puts Picasaweb Albums into drupal. 4vbt.
+package = Picasaweb - optional
+version = VERSION
+core = 6.x
+

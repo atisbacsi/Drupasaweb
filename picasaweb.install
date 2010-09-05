@@ -1,0 +1,105 @@
+<?php
+// $Id: picasaweb.install
+
+/**
+ * Implementation of hook_install().
+ */
+function picasaweb_install() {
+  if (!db_table_exists('picasaweb')) {
+    drupal_install_schema('picasaweb');
+  }
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function picasaweb_uninstall() {
+  // Remove tables.
+  drupal_uninstall_schema('picasaweb');
+}
+
+/**
+ * Implementation of hook_schema().
+ */
+function picasaweb_schema() {
+
+  $schema['picasaweb_type'] = array(
+    'description' => t('Stores the associated nodetype of picasaweb.'),
+    'fields' => array(
+      'id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => t('Primary Key: The {picasaweb_type}.id.'),
+      ),
+      'type' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => t('The {node_type}.id associated with the picasaweb system.'),
+      ),
+    ),
+    'primary key' => array('id'),
+    'indexes' => array(
+      'id' => array('id'),
+      'type' => array('type'),
+    ),
+  );
+
+  $schema['picasaweb'] = array(
+    'description' => t('Stores album information and table associations.'),
+    'fields' => array(
+      'id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => t('Primary Key: The {picasaweb}.id.'),
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => t('The {node}.nid associated with the picasaweb album.'),
+      ),
+      'vid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => t('Primary Key: The {node}.vid associated with the uploaded file.'),
+      ),
+      'gmail' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => ''	,
+        'description' => t('GMail ID'),
+      ),
+      'albumname' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => t('Name of the selected album.'),
+      ),
+      'albumid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => t('ID of the selected album.'),
+      ),
+    ),
+    'primary key' => array('id'),
+    'indexes' => array(
+      'id' => array('id'),
+      'nid' => array('nid'),
+    ),
+  );
+
+  return $schema;
+}
+
+

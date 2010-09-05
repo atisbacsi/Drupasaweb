@@ -1,0 +1,64 @@
+/* 
+Document   : picasaweb.css
+Created on : 2008.12.04., 9:55:18
+Author     : attila.varga
+Description:
+Purpose of the stylesheet follows.
+*/
+
+div.listImg
+{
+    margin: 1px;
+    /*border: 1px solid #0000ff;*/
+    height: auto;
+    width: auto;
+    float: left;
+    text-align: center;
+    padding: 1px;
+}
+div.listImgborder
+{
+    margin: 1px;
+    float: left;
+    text-align: center;
+    overflow: hidden;
+    padding: 1px;
+}
+div.listImg img
+{
+    display: inline;
+    margin: 1px;
+    border: 1px solid #ffffff;
+}
+div.listImg a:hover img {border: 1px solid #0000ff;}
+div.listDesc
+{
+    text-align: center;
+    font-weight: normal;
+    margin: 1px;
+    clear:both;
+}
+
+div.browserImgborder
+{
+    margin: 1px;
+    text-align: center;
+    overflow: hidden;
+    padding: 1px;
+    margin:0px auto;
+
+}
+div.browserImg img
+{
+    display: inline;
+    margin: 1px;
+    border: 1px solid #ffffff;
+}
+
+div.browserDesc
+{
+    text-align: center;
+    font-weight: normal;
+    margin: 1px;
+    clear:both;
+}

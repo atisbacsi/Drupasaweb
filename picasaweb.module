@@ -1,0 +1,575 @@
+<?php
+/* 
+ * To change this template, choose Tools | Templates
+ * and open the template in the editor.
+*/
+//var_dump(drupal_get_path('module', 'picasaweb'));
+//set_include_path(get_include_path() . PATH_SEPARATOR . drupal_get_path('module', 'picasaweb').'/library/');
+set_include_path(get_include_path() . PATH_SEPARATOR .realpath(drupal_get_path('module', 'picasaweb').'/library/'));
+require_once 'Zend/Loader.php';
+Zend_Loader::loadClass('Zend_Gdata_Photos');
+Zend_Loader::loadClass('Zend_Gdata_ClientLogin');
+Zend_Loader::loadClass('Zend_Gdata_AuthSub');
+
+
+
+define(PICASAWEB_THUMBNAIL_SMALL, 0);
+define(PICASAWEB_THUMBNAIL_NORMAL, 1);
+define(PICASAWEB_THUMBNAIL_BIG, 2);
+
+function picasaweb_getPicSizes() {
+    return array(
+            "thumbnailSizes" => array(
+                    32 => 32,
+                    48 => 48,
+                    64 => 64,
+                    72 => 72,
+                    144 => 144,
+                    160 => 160
+            ),
+            "pictureSizes" => array(
+                    200 => 200,
+                    288 => 288,
+                    320 => 320,
+                    400 => 400,
+                    512 => 512,
+                    576 => 576,
+                    640 => 640,
+                    720 => 720,
+                    800 => 800
+            ),
+    );
+}
+
+/**
+ * Display help and module information
+ * @param path which path of the site we're displaying help
+ * @param arg array that holds the current path as would be returned from arg() function
+ * @return help text for the path
+ */
+function picasaweb_help($path, $arg) {
+    $output = '';
+    switch ($path) {
+        case "admin/help#picasaweb":
+            $output = '<p>'.  t("This show picasaweb albums") .'</p>';
+            break;
+    }
+    return $output;
+} // function onthisdate_help
+
+function picasaweb_perm() {
+
+    return array('access picasaweb content', 'add picasaweb album', 'administer picasaweb');
+} // function picasaweb picasaweb_perm
+
+
+function picasaweb_admin() {
+    $s = picasaweb_getPicSizes();
+    $thumbnailSizes = $s["thumbnailSizes"];
+    $pictureSizes = $s["pictureSizes"];
+
+
+    $form['picasaweb_proxy_server'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Proxy server'),
+            '#default_value' => variable_get('picasaweb_proxy_server', '' ),
+            '#size' => 50,
+            '#maxlength' => 255,
+            '#description' => t("Insert name of server (eg.: proxy.company.com)"),
+            '#required' => FALSE,
+    );
+
+    $form['picasaweb_proxy_port'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Proxy server port'),
+            '#default_value' => variable_get('picasaweb_proxy_port', '' ),
+            '#size' => 5,
+            '#maxlength' => 6,
+            '#description' => t("Insert name of server (eg.: 3128)"),
+            '#required' => FALSE,
+    );
+    $form['picasaweb_album_thumbnail_size'] = array(
+            '#type' => 'select',
+            '#title' => t("Thumbnail size in albumlist"),
+            '#default_value' => variable_get('picasaweb_album_thumbnail_size', '' ),
+            '#options' => $thumbnailSizes,
+            '#description' => t("Choose a size for the thumbnail pictures in the list of albums"),
+    );
+
+    $form['picasaweb_photo_thumbnail_size'] = array(
+            '#type' => 'select',
+            '#title' => t("Thumbnail size in photolist"),
+            '#default_value' => variable_get('picasaweb_photo_thumbnail_size', '' ),
+            '#options' => $thumbnailSizes,
+            '#description' => t("Choose a size for the thumbnail pictures in the list of photos"),
+    );
+
+    $form['picasaweb_photo_size'] = array(
+            '#type' => 'select',
+            '#title' => t("Size of Pictures"),
+            '#default_value' => variable_get('picasaweb_photo_size', '' ),
+            '#options' => $pictureSizes,
+            '#description' => t("Choose a size for the pictures"),
+    );
+
+    return system_settings_form($form);
+}
+
+function picasaweb_admin_validate($form, &$form_state) {
+
+    $proxy = $form_state['values']['picasaweb_proxy_server'];
+    $proxyport = $form_state['values']['picasaweb_proxy_port'];
+}
+function existPicasawebAccount($picasawebAccount) {
+    $service = picasaweb_getPhotoService();
+
+    $query = $service->newUserQuery();
+    $query->setUser($picasawebAccount);
+
+    try {
+        $service->getUserFeed($picasawebAccount);
+    } catch (Zend_Gdata_App_HttpException $e) {
+        if ($e !== NULL && method_exists($e, "getMessage") && strpos($e->getMessage(),"Unable to find user with email") === false) {
+            return $e->getMessage();
+        }
+        return false;
+    }
+    return true;
+}
+function existPicasawebAlbum($gmail, $albumname) {
+    $service = picasaweb_getPhotoService();
+    
+    $query = $service->newAlbumQuery();
+    $query->setUser($gmail);
+    $query->setAlbumName($albumname);
+
+    try {
+        $albumFeed = $service->getAlbumFeed($query);
+        foreach($albumFeed as $photoEntry) {
+            return true;
+        }
+    } catch (Zend_Gdata_App_Exception $e) {
+
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+
+        if ($e->getResponse() != null) {
+            $errorMessage .=  $e->getResponse()->getBody();
+        }
+    } catch (Zend_Gdata_App_Exception $e) {
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+    }
+    return false;
+}
+/**
+ * Generate HTML for the onthisdate block
+ * @param op the operation from the URL
+ * @param delta offset
+ * @returns block HTML
+ */
+function picasaweb_block($op='list', $delta=0) {
+    // listing of blocks, such as on the admin/block page
+    if ($op == "list") {
+        $block[0]["info"] = 'Picasaweb for Drupal';
+        return $block;
+    } else if ($op == 'view') {
+        // set up the block
+        $block['subject'] = 'Picasaweb subj';
+        $block['content'] = 'Picasaweb content';
+        return $block;
+    }
+} // end onthisdate_block
+
+function picasaweb_menu() {
+
+    $items = array();
+
+    $items['admin/settings/picasaweb'] = array(
+            'title' => 'Picasaweb module settings',
+            'description' => 'Description of your Picasaweb settings control',
+            'page callback' => 'drupal_get_form',
+            'page arguments' => array('picasaweb_admin'),
+            'access arguments' => array('access administration pages'),
+            'type' => MENU_NORMAL_ITEM,
+    );
+    $items['pw'] = array(
+            'title' => 'Fotógaléria',
+            'page callback' => 'picasaweb_albumlist',
+            'access arguments' => array('access picasaweb content'),
+            'type' => MENU_CALLBACK
+    );
+    $items['pw/%'] = array(
+            'title' => 'Fotógaléria',
+            'title callback' => 'picasaweb_photobrowser_title',
+            'title arguments' => array(1),
+            'page callback' => 'picasaweb_photobrowser',
+            'page arguments' => array(1),
+            'access arguments' => array('access picasaweb content'),
+            'type' => MENU_CALLBACK
+    );
+    return $items;
+}
+function picasaweb_albumlist() {
+
+    //lekéri adatbázisból az albumot tartalmazó node-ok listáját, aztán egyenként lekérdezi az album adatait (név, kiskép, szélesség, magasság) a getThumbnailDataOfAlbum fv. segítségével.
+    $albumPath = "pw";
+    $albumList = array();
+    $size = variable_get('picasaweb_album_thumbnail_size', '' );
+
+    $result = db_query('SELECT albumname, gmail,nid FROM {picasaweb} r WHERE albumname IS NOT NULL AND gmail IS NOT NULL');
+    while ($albumIdRow = db_fetch_object($result)) {
+        $albumname = $albumIdRow->albumname;
+        $gmail = $albumIdRow->gmail;
+        $nid = $albumIdRow->nid;
+        $albumData = getThumbnailDataOfAlbum($gmail,$albumname,$nid);
+        if ($albumData != null) {
+            $albumList[] = $albumData;
+        }
+    }
+
+    drupal_add_css(drupal_get_path('module', 'picasaweb') .'/picasaweb.css');
+    return theme("albumlist",$albumList,$size,$albumPath);
+}
+function getThumbnailDataOfAlbum($gmail,$albumname,$nid) {
+
+    $service = picasaweb_getPhotoService();
+    $size = variable_get('picasaweb_album_thumbnail_size', '144' );
+    $query = $service->newUserQuery();
+    $query->setUser($gmail);
+    $query->setThumbsize($size);
+
+    try {
+        $userFeed = $service->getUserFeed($gmail, $query);
+    } catch (Zend_Gdata_App_HttpException $e) {
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+        if ($e->getResponse() != null) {
+            $errorMessage .=  $e->getResponse()->getBody();
+        }
+        return theme("error",$errorMessage);
+    } catch (Zend_Gdata_App_Exception $e) {
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+        $errorMessage .=  "Error: " . $e->getMessage() . "<br />\n";
+        return theme("error",$errorMessage);
+    }
+
+
+    foreach ($userFeed as $albumEntry) {
+        if( $albumEntry->getGphotoName()->getText() != $albumname) continue;
+        $mediaThumbnailArray = $albumEntry->getMediaGroup()->getThumbnail();
+        $thumbnailUrl = $mediaThumbnailArray[0]->getUrl();
+
+        $albumList = array(
+                "title" => $albumEntry->title->text,
+                "id" => $nid,
+                "thumbnailUrl" => $thumbnailUrl,
+        );
+    }
+    return $albumList;
+}
+
+function picasaweb_photobrowser_title($nodeid = NULL) {
+    $result = db_query('SELECT albumname, gmail FROM {picasaweb} r WHERE r.nid = %d', $nodeid);
+
+    while ($albumIdRow = db_fetch_object($result)) {
+        $albumname = $albumIdRow->albumname;
+        $gmail = $albumIdRow->gmail;
+    }
+
+    $service = picasaweb_getPhotoService();
+    $query = $service->newUserQuery();
+    $query->setUser($gmail);
+
+    try {
+        $userFeed = $service->getUserFeed($gmail, $query);
+    } catch (Zend_Gdata_App_HttpException $e) {
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+        if ($e->getResponse() != null) {
+            $errorMessage .=  $e->getResponse()->getBody();
+        }
+        return theme("error",$errorMessage);
+    } catch (Zend_Gdata_App_Exception $e) {
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+        $errorMessage .=  "Error: " . $e->getMessage() . "<br />\n";
+        return theme("error",$errorMessage);
+    }
+
+
+    foreach ($userFeed as $albumEntry) {
+        if( $albumEntry->getGphotoName()->getText() == $albumname) {
+            return $albumEntry->title->text ;
+        }
+    }
+    return "Fotógaléria";
+}
+
+function picasaweb_photobrowser($nodeid = NULL) {
+    $result = db_query('SELECT albumname, gmail FROM {picasaweb} r WHERE r.nid = %d', $nodeid);
+
+    while ($albumIdRow = db_fetch_object($result)) {
+        $albumName = $albumIdRow->albumname;
+        $gmail = $albumIdRow->gmail;
+    }
+
+    $service = picasaweb_getPhotoService();
+
+    $query = $service->newAlbumQuery();
+    $query->setUser($gmail);
+    $query->setAlbumName($albumName);
+
+    $query->setThumbsize(144);
+    $size = variable_get('picasaweb_photo_size', '640' );
+    $query->setImgMax($size);
+
+    $photoPath = "pw/photo";
+
+    try {
+        $albumFeed = $service->getAlbumFeed($query);
+        foreach($albumFeed as $photoEntry) {
+            $mediaThumbnailArray = $photoEntry->getMediaGroup()->getThumbnail();
+            $thumbnailUrl = $mediaThumbnailArray[0]->getUrl();
+
+            $thumbnailPortrait = (
+                    $mediaThumbnailArray[0]->getWidth()
+                            /
+                            $mediaThumbnailArray[0]->getHeight() )  < 1;
+            if ($maxWidth < $mediaThumbnailArray[0]->getWidth()) {
+                $maxWidth = $mediaThumbnailArray[0]->getWidth();
+            }
+            if ($minHeight === NULL || $minHeight < $mediaThumbnailArray[0]->getHeight()) {
+                $minHeight = $mediaThumbnailArray[0]->getHeight();
+            }
+            $mediaContentArray = $photoEntry->getMediaGroup()->getContent();
+            $desc = $photoEntry->getMediaGroup()->getDescription()->getText();
+            $url = $mediaContentArray[0]->getUrl();
+            $title = $photoEntry->getTitle()->getText();
+            $id = $photoEntry->getGphotoId()->getText();
+
+            $photoList[] = array(
+                    "desc" => $desc,
+                    "url" => $url,
+                    "title" => $photoEntry->getTitle()->getText(),
+                    "id" => $photoEntry->getGphotoId()->getText(),
+                    "thumbnailUrl" => $thumbnailUrl,
+                    "portrait" => $thumbnailPortrait,
+                    "height" => $mediaThumbnailArray[0]->getHeight()
+            );
+        }
+        drupal_add_css(drupal_get_path('module', 'picasaweb') .'/picasaweb.css');
+        return theme("photobrowser",$photoList,$photoPath, $maxWidth, $minHeight,$albumId);
+    } catch (Zend_Gdata_App_Exception $e) {
+
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+
+        if ($e->getResponse() != null) {
+            $errorMessage .=  $e->getResponse()->getBody();
+        }
+        return theme("error",$errorMessage);
+
+    } catch (Zend_Gdata_App_Exception $e) {
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+        $errorMessage .=  "Error: " . $e->getMessage() . "<br />\n";
+        return theme("error",$errorMessage);
+    }
+}
+
+
+function getAlbumListForSelect() {
+    $gmail = variable_get("picasaweb_gmail", '');
+
+    $service = picasaweb_getPhotoService();
+
+    $query = $service->newUserQuery();
+    $albumList = array();
+    try {
+        $userFeed = $service->getUserFeed($gmail, $query);
+    } catch (Zend_Gdata_App_HttpException $e) {
+
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+
+        if ($e->getResponse() != null) {
+            $errorMessage .=  $e->getResponse()->getBody();
+        }
+        return theme("error",$errorMessage);
+    } catch (Zend_Gdata_App_Exception $e) {
+        watchdog('picasaweb', $e->getMessage(), array(), WATCHDOG_NOTICE);
+        $errorMessage .=  "Error: " . $e->getMessage() . "<br />\n";
+        return theme("error",$errorMessage);
+    }
+
+    $albumList["none"] = " - ";
+
+    foreach ($userFeed as $albumEntry) {
+        $albumList[$albumEntry->getGphotoId()->getText()] =
+                $albumEntry->title->text;
+    }
+    return $albumList;
+}
+
+function picasaweb_getPhotoService() {
+    $gmail = variable_get("picasaweb_gmail", '');
+    $proxyServer = variable_get("picasaweb_proxy_server", '');
+    $proxyPort = variable_get("picasaweb_proxy_port", '');
+
+
+    if (strlen($proxyServer)) {
+        // Configure the proxy connection
+        $config = array(
+                'adapter'    => 'Zend_Http_Client_Adapter_Proxy',
+                'proxy_host' => $proxyServer, //'Proxy2'
+                'proxy_port' => $proxyPort, //8080
+        );
+
+    } else {
+        $config = NULL;
+    }
+
+    $proxiedHttpClient = new Zend_Http_Client('http://picasaweb.google.com:80', $config);
+
+    $service = new Zend_Gdata_Photos($proxiedHttpClient, "4VBt-DrupalPicasaweb-0.1");
+
+    return $service;
+
+}
+function picasaweb_form_node_type_form_alter(&$form, $form_state) {
+    $form['workflow'][ 'node_options' ][ '#options' ][ 'node_picasaweb' ] = "Picasaweb node tipus?";
+    $form['#validate'][] = 'picasaweb_form_node_type_form_validate';
+    $form['#submit'][] = 'picasaweb_form_node_type_form_submit';
+    // var_dump($form);
+}
+
+function picasaweb_form_alter(&$form, $form_state, $form_id) {
+    $node_options = variable_get("node_options_".$form['type']['#value'], '');
+    if (is_array($node_options) && array_search("node_picasaweb",$node_options) !== false) {
+        if (isset($form['type']) && isset($form['#node'])) {
+            $node = $form['#node'];
+            if ($form['type']['#value'] .'_node_form' == $form_id) {
+                // Attachments fieldset
+                $form['settings_picasaweb'] = array(
+                        '#type' => 'fieldset',
+                        '#title' => t('Fotógaléria beállítások'),
+                        '#collapsible' => TRUE,
+                        '#collapsed' => TRUE
+                );
+                $form['settings_picasaweb']['picasaweb_gmail'] = array(
+                        '#type' => 'textfield',
+                        '#title' => t("Gmail id"),
+                        '#default_value' => $node->picasaweb_gmail,
+                        '#description' => t("Gmail azonosító"),
+                );
+                $form['settings_picasaweb']['picasaweb_albumname'] = array(
+                        '#type' => 'textfield',
+                        '#title' => t("Picasaweb album"),
+                        '#default_value' => $node->picasaweb_albumname,
+                        '#description' => t("Album azonosító"),
+                );
+                $form['#submit'][] = 'picasaweb_node_form_submit';
+                $form['#validate'][] = 'picasaweb_node_form_validate';
+            }
+        }
+    }
+}
+function picasaweb_node_form_validate(&$form, &$form_state) {
+
+    $gmail = $form_state['values']['picasaweb_gmail'];
+    $albumname = $form_state['values']['picasaweb_albumname'];
+
+    if(!existPicasawebAccount($gmail)) {
+        form_set_error('picasaweb_gmail', t('Nemlétező gmail azonosító!'));
+    }
+    if(!existPicasawebAlbum($gmail, $albumname)) {
+        form_set_error('picasaweb_albumname', t('Nemlétező albumnév!'));
+    }
+
+}
+function picasaweb_node_form_submit(&$form, &$form_state) {
+    $form['#node']->picasaweb_gmail = $form_state['values']['picasaweb_gmail'];
+    $form['#node']->picasaweb_albumname = $form_state['values']['picasaweb_albumname'];
+}
+
+function picasaweb_load($node) {
+
+    if ($node->vid) {
+        $result = db_query('SELECT albumname, gmail FROM {picasaweb} r WHERE r.nid = %d AND r.vid = %d', $node->nid, $node->vid);
+        while ($albumIdRow = db_fetch_object($result)) {
+            $albumname = $albumIdRow->albumname;
+            $gmail = $albumIdRow->gmail;
+        }
+    }
+    return array('picasaweb_albumname'=>$albumname, 'picasaweb_gmail'=>$gmail);
+}
+function picasaweb_node_save(&$node) {
+    // Create a new revision, or associate a new file needed.
+    $oldAlbumData = picasaweb_load($node);
+    $oldAlbumName= $oldAlbumData['picasaweb_albumname'];
+    $oldGmail = $oldAlbumData['picasaweb_gmail'];
+    $result = db_query("SELECT count(*) as c FROM {picasaweb} r WHERE r.nid = %d AND r.vid = %d", $node->nid, $node->vid);
+    $res = db_fetch_object($result);
+    if (strlen((string)$node->picasaweb_albumname)>0 && strlen((string)$node->picasaweb_gmail)>0) {
+        if ($res->c==0) {
+            db_query("INSERT INTO {picasaweb} (nid, vid, albumname, gmail) VALUES (%d, %d, '%s','%s')", $node->nid, $node->vid, (string)$node->picasaweb_albumname, (string)$node->picasaweb_gmail);
+        }
+        // Update existing revision.
+        else {
+            db_query("UPDATE {picasaweb} SET nid = %d, albumname = '%s', gmail = '%s' WHERE vid = %d", $node->nid, (string)$node->picasaweb_albumname, (string)$node->picasaweb_gmail, $node->vid);
+        }
+    }
+}
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function picasaweb_nodeapi(&$node, $op, $teaser) {
+    switch ($op) {
+        case 'load':
+            $data = picasaweb_load($node);
+            $output = '';
+            $output['picasaweb_albumname'] = $data['picasaweb_albumname'];
+            $output['picasaweb_gmail'] = $data['picasaweb_gmail'];
+            return $output;
+            break;
+        case 'view':
+        //ide kéne valami jó megjelenítés a node-on belül
+        case 'insert':
+        case 'update':
+            if (user_access('add picasaweb album')) {
+                picasaweb_node_save($node);
+            }
+            break;
+
+        case 'delete':
+        case 'delete revision':
+            break;
+
+        case 'search result':
+        case 'rss item':
+            return array();
+    }
+}
+
+
+function picasaweb_theme() {
+    return array(
+            'albumlist' => array(
+                    'template' => 'albumlist',
+                    'arguments' => array('albumList' => NULL, 'size' => 160, 'albumPath' => NULL ),
+            ),
+            'photolist' => array(
+                    'template' => 'photolist',
+                    'arguments' => array('photoList' => NULL, 'photoPath' => NULL, 'width' => 160, 'height' => 160, 'albumId' => NULL),
+            ),
+            'photobrowser' => array(
+                    'template' => 'photobrowser',
+                    'arguments' => array('photoList' => NULL, 'photoPath' => NULL, 'width' => 160, 'height' => 160, 'albumId' => NULL),
+            ),
+            'photo' => array(
+                    'template' => 'photo',
+                    'arguments' => array('url' => NULL, 'title' => NULL, 'description' => NULL, 'width' => NULL, 'height' => NULL, 'id' => NULL),
+            ),
+            'error' => array(
+                    'template' => 'error',
+                    'arguments' => array('message' => NULL),
+            ),
+            'picasaweb_albumlink' => array(
+                    'arguments' => array('albumid' => NULL),
+            ),
+    );
+}
